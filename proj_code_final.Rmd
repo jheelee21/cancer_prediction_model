@@ -1,0 +1,117 @@
+---
+title: "test"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(rpart)
+library(partykit)
+library(knitr)
+```
+
+data cleaning
+```{r}
+proj_data <- read_csv("STA130_Course_Project.csv")
+```
+
+```{r}
+proj_data %>% select(NGFR) %>% ggplot(aes(x=NGFR)) + geom_histogram(bins=50)
+proj_data %>% select(MiTFg) %>% ggplot(aes(x=MiTFg)) + geom_histogram(bins=50)
+proj_data %>% select(Sox10) %>% ggplot(aes(x=Sox10)) + geom_histogram(bins=50)
+proj_data %>% select(AXL) %>% ggplot(aes(x=AXL)) + geom_histogram(bins=50)
+```
+
+```{r}
+NGFR <- proj_data %>% summarise(median_NGFR=median(NGFR), mean_NGFR=mean(NGFR))
+MiTFg <- proj_data %>% summarise(median_MiTFg=median(MiTFg), mean_MiTFg=mean(MiTFg))
+Sox10 <- proj_data %>% summarise(median_Sox10=median(Sox10), mean_Sox10=mean(Sox10))
+AXL <- proj_data %>% summarise(median_AXL=median(AXL), mean_AXL=mean(AXL))
+
+median_NGFR <- NGFR$median_NGFR
+median_MiTFg <- MiTFg$median_MiTFg
+median_Sox10 <- Sox10$median_Sox10
+median_AXL <- AXL$median_AXL
+```
+
+
+```{r}
+proj_data_01 <- proj_data %>% rename(id = '...1') %>% 
+  mutate(
+    cell_phenotype = case_when(
+      MiTFg < median_MiTFg & NGFR < median_NGFR & Sox10 < median_Sox10 & AXL >= median_AXL ~ "Undifferentiated",
+      MiTFg < median_MiTFg & NGFR >= median_NGFR & Sox10 >= median_Sox10 & AXL >= median_AXL ~ "Neural crest-like",
+      MiTFg >= median_MiTFg & NGFR >= median_NGFR & Sox10 >= median_Sox10 & AXL < median_AXL ~ "Transitory",
+      MiTFg >= median_MiTFg & NGFR >= median_NGFR & Sox10 < median_Sox10 & AXL < median_AXL ~ "Melanocytic",
+      TRUE ~ NA_character_
+), .after = "id") %>% 
+  filter(dose_id == 5, drug_id == 1, cell_phenotype != is.na(cell_phenotype))
+```
+
+decision tree - classification
+```{r}
+proj_data_02 <- proj_data_01 %>% 
+  mutate(NGFR_category = case_when(NGFR < median_NGFR ~ "LOW", NGFR >= median_NGFR ~ "HIGH")) %>% 
+  filter(timepoint_id == 3) %>%
+  select(-cell_phenotype, -Drugs, -drug_id, -Timepoint, -timepoint_id, -dose_id, -Doses, -Rep) 
+
+set.seed(321)
+proj_data_02 %>% rowid_to_column() -> proj_data_02
+n <- nrow(proj_data_02)
+train_ids <- sample(1:n, size=round(0.8*n))
+train <- proj_data_02 %>% filter(rowid %in% train_ids)
+test <- proj_data_02 %>% filter(!(rowid %in% train_ids))
+
+tree <- rpart(NGFR_category ~ ATF2+ATF3+ATF4+ATF5+ATF6+Phospho_ATF1+
+                 Phospho_ATF2+Phospho_ATF4+JunB+c_Jun+JunD+Phospho_S6+
+                 Phospho_c_Jun+Phospho_Erk1+Fra1+Fra2+c_Fos+Ki_67+
+                 Phospho_Fra1+Phospho_c_Fos+Phospho_p38+NF_kappaB, data=train)
+
+tree %>% as.party() %>% 
+  plot(type="simple", gp=gpar(cex=0.8),ep_args=list(justmin=15), 
+       tp_args = list(id=FALSE, FUN = function(info) 
+         list(format(info$prediction), format(paste("n =",info$n)),
+              format(paste(round(info$err,1),"% err",sep="")))))
+
+barplot(t(tree$variable.importance))
+```
+
+
+```{r}
+tree_test_pred <- predict(tree, type="class", newdata=test)
+test_confusion_matrix <- table(`y-hat`=tree_test_pred, `observed y`=test$NGFR_category)
+
+n_TN <- test_confusion_matrix[1,1]
+n_FN <- test_confusion_matrix[1,2]
+n_FP <- test_confusion_matrix[2,1]
+n_TP <- test_confusion_matrix[2,2]
+
+accuracy <- (n_TP+n_TN)/sum(test_confusion_matrix)
+accuracy
+precision <- (n_TP)/(n_TP+n_FP)
+precision
+sensitivity <- (n_TP)/(n_TP+n_FN)
+sensitivity
+specificity <- (n_TN)/(n_TN+n_FP)
+specificity
+```
+
+correlation
+```{r}
+proj_data_01 %>% filter(timepoint_id == 1) %>% ggplot(aes(x=ATF4, y=NGFR)) + geom_point() + geom_smooth(method=lm, se=FALSE)
+proj_data_01 %>% filter(timepoint_id == 2) %>% ggplot(aes(x=ATF4, y=NGFR)) + geom_point() + geom_smooth(method=lm, se=FALSE)
+proj_data_01 %>% filter(timepoint_id == 3) %>% ggplot(aes(x=ATF4, y=NGFR)) + geom_point() + geom_smooth(method=lm, se=FALSE)
+proj_data_01 %>% filter(timepoint_id == 4) %>% ggplot(aes(x=ATF4, y=NGFR)) + geom_point() + geom_smooth(method=lm, se=FALSE)
+proj_data_01 %>% filter(timepoint_id == 5) %>% ggplot(aes(x=ATF4, y=NGFR)) + geom_point() + geom_smooth(method=lm, se=FALSE)
+proj_data_01 %>% filter(timepoint_id == 6) %>% ggplot(aes(x=ATF4, y=NGFR)) + geom_point() + geom_smooth(method=lm, se=FALSE)
+proj_data_01 %>% filter(timepoint_id == 7) %>% ggplot(aes(x=ATF4, y=NGFR)) + geom_point() + geom_smooth(method=lm, se=FALSE)
+
+proj_data_01 %>% group_by(timepoint_id) %>% summarise(n=n(), cor = cor(ATF4, NGFR, use="na.or.complete"))
+```
+multivariate regression
+```{r}
+proj_data_03 <- proj_data_01 %>% select(NGFR, ATF4, Timepoint)
+least_squares_fit <- lm(NGFR ~ ATF4*Timepoint, data=proj_data_03)
+summary(least_squares_fit)$coefficients
+```
